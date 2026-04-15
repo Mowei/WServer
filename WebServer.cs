@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Security;
@@ -317,25 +318,34 @@ internal static class Program
 
     private static string MakeJwt(string host, int port)
     {
-        var header = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object>
+        var headerBuffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(headerBuffer))
         {
-            ["typ"] = "JWT",
-            ["alg"] = "HS256"
-        }));
+            writer.WriteStartObject();
+            writer.WriteString("typ", "JWT");
+            writer.WriteString("alg", "HS256");
+            writer.WriteEndObject();
+        }
 
-        var payload = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object>
+        var payloadBuffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(payloadBuffer))
         {
-            ["id"] = Guid.NewGuid().ToString(),
-            ["p"] = new Dictionary<string, object>
-            {
-                ["Tcp"] = new Dictionary<string, object>
-                {
-                    ["proxy_protocol"] = false
-                }
-            },
-            ["r"] = host,
-            ["rp"] = port
-        }));
+            writer.WriteStartObject();
+            writer.WriteString("id", Guid.NewGuid().ToString());
+            writer.WritePropertyName("p");
+            writer.WriteStartObject();
+            writer.WritePropertyName("Tcp");
+            writer.WriteStartObject();
+            writer.WriteBoolean("proxy_protocol", false);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+            writer.WriteString("r", host);
+            writer.WriteNumber("rp", port);
+            writer.WriteEndObject();
+        }
+
+        var header = Base64UrlEncode(headerBuffer.WrittenSpan.ToArray());
+        var payload = Base64UrlEncode(payloadBuffer.WrittenSpan.ToArray());
 
         var signingInput = Encoding.ASCII.GetBytes($"{header}.{payload}");
         using var hmac = new HMACSHA256(Encoding.ASCII.GetBytes("any-secret"));
