@@ -30,8 +30,8 @@ internal static partial class Program
 
     private static async Task HandleClientAsync(TcpClient client, AppConfig cfg)
     {
-        WebSocketTool? ws = null;
-        await using var wsClient = new WebSocketToolClient(cfg);
+        WebSocketToolStream? ws = null;
+        await using var wsClient = new WebSocketToolAdapter(cfg);
         try
         {
             var clientStream = client.GetStream();
@@ -52,7 +52,7 @@ internal static partial class Program
             var (host, port) = ParseConnectAuthority(parts[1]);
 
             Console.WriteLine($"[connect] {host}:{port}");
-            ws = await wsClient.SendAsync(new WebSocketToolRequest(host, port));
+            ws = await wsClient.OpenAsync(new WebSocketToolRequest(host, port));
 
             await WriteAsciiAsync(clientStream, "HTTP/1.1 200 OK\r\n\r\n");
             await RelayAsync(clientStream, ws);
@@ -72,7 +72,7 @@ internal static partial class Program
         }
     }
 
-    private static async Task RelayAsync(NetworkStream local, WebSocketTool ws)
+    private static async Task RelayAsync(NetworkStream local, WebSocketToolStream ws)
     {
         using var cts = new CancellationTokenSource();
 

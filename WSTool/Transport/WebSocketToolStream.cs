@@ -3,17 +3,33 @@ using System.Net.Sockets;
 
 namespace WSTool.Transport;
 
-public sealed class WebSocketTool : IAsyncDisposable
+public sealed class WebSocketToolStream : Stream
 {
     private readonly TcpClient _tcp;
     private readonly Stream _stream;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
-    public WebSocketTool(TcpClient tcp, Stream stream)
+    private byte[] _readBuffer = Array.Empty<byte>();
+    private int _readOffset;
+    private bool _disposed;
+
+    public WebSocketToolStream(TcpClient tcp, Stream stream)
     {
         _tcp = tcp;
         _stream = stream;
     }
+
+    public override bool CanRead => !_disposed;
+    public override bool CanSeek => false;
+    public override bool CanWrite => !_disposed;
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
 
     public async Task SendFrameAsync(byte opcode, ReadOnlyMemory<byte> payload, CancellationToken ct)
     {
@@ -127,14 +143,6 @@ public sealed class WebSocketTool : IAsyncDisposable
         return new WsFrame(opcode, payload);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        try { _stream.Close(); } catch { }
-        try { _tcp.Close(); } catch { }
-        _sendLock.Dispose();
-        await Task.CompletedTask;
-    }
-
     private static async Task<bool> ReadExactAsync(Stream stream, byte[] buf, int off, int len, CancellationToken ct)
     {
         var n = 0;
@@ -150,5 +158,122 @@ public sealed class WebSocketTool : IAsyncDisposable
         }
 
         return true;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        return ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        if (buffer.Length == 0)
+        {
+            return 0;
+        }
+
+        while (true)
+        {
+            var available = _readBuffer.Length - _readOffset;
+            if (available > 0)
+            {
+                var copyLen = Math.Min(buffer.Length, available);
+                _readBuffer.AsSpan(_readOffset, copyLen).CopyTo(buffer.Span);
+                _readOffset += copyLen;
+
+                if (_readOffset >= _readBuffer.Length)
+                {
+                    _readBuffer = Array.Empty<byte>();
+                    _readOffset = 0;
+                }
+
+                return copyLen;
+            }
+
+            var frame = await ReadFrameAsync(cancellationToken);
+            if (frame is null)
+            {
+                return 0;
+            }
+
+            switch (frame.Value.Opcode)
+            {
+                case 0x2:
+                case 0x1:
+                    _readBuffer = frame.Value.Payload;
+                    _readOffset = 0;
+                    break;
+                case 0x9:
+                    await SendFrameAsync(0xA, frame.Value.Payload, cancellationToken);
+                    break;
+                case 0x8:
+                    return 0;
+            }
+        }
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        WriteAsync(buffer.AsMemory(offset, count), CancellationToken.None).AsTask().GetAwaiter().GetResult();
+    }
+
+    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await SendFrameAsync(0x2, buffer, cancellationToken);
+    }
+
+    public override void Flush()
+    {
+    }
+
+    public override Task FlushAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        throw new NotSupportedException();
+    }
+
+    public override void SetLength(long value)
+    {
+        throw new NotSupportedException();
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        try { _stream.Close(); } catch { }
+        try { _tcp.Close(); } catch { }
+        _sendLock.Dispose();
+        await Task.CompletedTask;
+
+        _disposed = true;
+
+        GC.SuppressFinalize(this);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        base.Dispose(disposing);
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 }
