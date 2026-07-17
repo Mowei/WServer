@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using WebServer.Configuration;
 using WSTool.Contracts;
 using WSTool.Transport;
+using WSTool.Utils;
 
 internal static partial class Program
 {
@@ -41,17 +41,17 @@ internal static partial class Program
         try
         {
             var clientStream = client.GetStream();
-            var head = await ReadHttpHeadAsync(clientStream);
+            var head = await HttpStreamUtil.ReadHttpHeadAsync(clientStream);
             if (head.Length == 0)
             {
                 return;
             }
 
-            var firstLine = GetFirstLine(head);
+            var firstLine = HttpStreamUtil.GetFirstLine(head);
             var parts = firstLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 2 || !parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
             {
-                await WriteAsciiAsync(clientStream, "HTTP/1.1 405 Method Not Allowed\r\n\r\n");
+                await HttpStreamUtil.WriteAsciiAsync(clientStream, "HTTP/1.1 405 Method Not Allowed\r\n\r\n");
                 return;
             }
 
@@ -60,7 +60,7 @@ internal static partial class Program
             Console.WriteLine($"[connect] {host}:{port}");
             ws = await wsClient.OpenAsync(new WebSocketToolRequest(host, port));
 
-            await WriteAsciiAsync(clientStream, "HTTP/1.1 200 OK\r\n\r\n");
+            await HttpStreamUtil.WriteAsciiAsync(clientStream, "HTTP/1.1 200 OK\r\n\r\n");
             await RelayAsync(clientStream, ws);
         }
         catch (Exception ex)
@@ -278,60 +278,5 @@ internal static partial class Program
         var h = authority[..idx];
         var p = int.Parse(authority[(idx + 1)..]);
         return (h, p);
-    }
-
-
-
-    private static string GetFirstLine(byte[] data)
-    {
-        var s = Encoding.ASCII.GetString(data);
-        var i = s.IndexOf("\r\n", StringComparison.Ordinal);
-        return i >= 0 ? s[..i] : s;
-    }
-
-    private static async Task<byte[]> ReadHttpHeadAsync(Stream stream)
-    {
-        var buffer = new byte[4096];
-        using var ms = new MemoryStream();
-        while (ms.Length < 65536)
-        {
-            var read = await stream.ReadAsync(buffer, 0, buffer.Length);
-            if (read <= 0)
-            {
-                break;
-            }
-
-            ms.Write(buffer, 0, read);
-            if (EndsWithHttpHead(ms.GetBuffer(), (int)ms.Length))
-            {
-                break;
-            }
-        }
-
-        return ms.ToArray();
-    }
-
-    private static bool EndsWithHttpHead(byte[] data, int len)
-    {
-        if (len < 4)
-        {
-            return false;
-        }
-
-        for (var i = 3; i < len; i++)
-        {
-            if (data[i - 3] == '\r' && data[i - 2] == '\n' && data[i - 1] == '\r' && data[i] == '\n')
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static Task WriteAsciiAsync(Stream stream, string text)
-    {
-        var bytes = Encoding.ASCII.GetBytes(text);
-        return stream.WriteAsync(bytes, 0, bytes.Length);
     }
 }

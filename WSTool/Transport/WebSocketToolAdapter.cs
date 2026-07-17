@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using WSTool.Configuration;
 using WSTool.Contracts;
+using WSTool.Utils;
 
 namespace WSTool.Transport;
 
@@ -74,10 +75,10 @@ public sealed class WebSocketToolAdapter : IAsyncDisposable
             $"Sec-WebSocket-Protocol: v1, authorization.bearer.{jwt}\r\n" +
             "\r\n";
 
-        await WriteAsciiAsync(stream, handshakeRequest);
+        await HttpStreamUtil.WriteAsciiAsync(stream, handshakeRequest, ct);
 
-        var responseHead = await ReadHttpHeadAsync(stream);
-        var statusLine = GetFirstLine(responseHead);
+        var responseHead = await HttpStreamUtil.ReadHttpHeadAsync(stream, ct);
+        var statusLine = HttpStreamUtil.GetFirstLine(responseHead);
         if (!statusLine.Contains(" 101 ", StringComparison.Ordinal))
         {
             var preview = Encoding.ASCII.GetString(responseHead);
@@ -122,10 +123,10 @@ public sealed class WebSocketToolAdapter : IAsyncDisposable
             $"Sec-WebSocket-Protocol: v1, authorization.bearer.{jwt}\r\n" +
             "\r\n";
 
-        await WriteAsciiAsync(stream, handshakeRequest);
+        await HttpStreamUtil.WriteAsciiAsync(stream, handshakeRequest, ct);
 
-        var responseHead = await ReadHttpHeadAsync(stream);
-        var statusLine = GetFirstLine(responseHead);
+        var responseHead = await HttpStreamUtil.ReadHttpHeadAsync(stream, ct);
+        var statusLine = HttpStreamUtil.GetFirstLine(responseHead);
         if (!statusLine.Contains(" 101 ", StringComparison.Ordinal))
         {
             var preview = Encoding.ASCII.GetString(responseHead);
@@ -200,56 +201,4 @@ public sealed class WebSocketToolAdapter : IAsyncDisposable
         };
     }
 
-    private static string GetFirstLine(byte[] data)
-    {
-        var s = Encoding.ASCII.GetString(data);
-        var i = s.IndexOf("\r\n", StringComparison.Ordinal);
-        return i >= 0 ? s[..i] : s;
-    }
-
-    private static async Task<byte[]> ReadHttpHeadAsync(Stream stream)
-    {
-        var buffer = new byte[4096];
-        using var ms = new MemoryStream();
-        while (ms.Length < 65536)
-        {
-            var read = await stream.ReadAsync(buffer, 0, buffer.Length);
-            if (read <= 0)
-            {
-                break;
-            }
-
-            ms.Write(buffer, 0, read);
-            if (EndsWithHttpHead(ms.GetBuffer(), (int)ms.Length))
-            {
-                break;
-            }
-        }
-
-        return ms.ToArray();
-    }
-
-    private static bool EndsWithHttpHead(byte[] data, int len)
-    {
-        if (len < 4)
-        {
-            return false;
-        }
-
-        for (var i = 3; i < len; i++)
-        {
-            if (data[i - 3] == '\r' && data[i - 2] == '\n' && data[i - 1] == '\r' && data[i] == '\n')
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static Task WriteAsciiAsync(Stream stream, string text)
-    {
-        var bytes = Encoding.ASCII.GetBytes(text);
-        return stream.WriteAsync(bytes, 0, bytes.Length);
-    }
 }
