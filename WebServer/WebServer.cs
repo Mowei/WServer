@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using WebServer.Configuration;
+using WebServer.Utils;
 using WSTool.Contracts;
 using WSTool.Transport;
 using WSTool.Utils;
@@ -37,7 +38,7 @@ internal static partial class Program
     private static async Task HandleClientAsync(TcpClient client, AppConfig cfg)
     {
         WebSocketToolStream? ws = null;
-        await using var wsClient = new WebSocketToolAdapter(cfg.ServerUrl, cfg.PathPrefix, cfg.VerifyTls);
+        await using var wsClient = new WebSocketToolAdapter(cfg);
         try
         {
             var clientStream = client.GetStream();
@@ -55,7 +56,7 @@ internal static partial class Program
                 return;
             }
 
-            var (host, port) = ParseConnectAuthority(parts[1]);
+            var (host, port) = ConnectAuthorityUtil.Parse(parts[1]);
 
             Console.WriteLine($"[connect] {host}:{port}");
             ws = await wsClient.OpenAsync(new WebSocketToolRequest(host, port));
@@ -146,11 +147,11 @@ internal static partial class Program
     {
         var cfg = new AppConfig
         {
-            ServerUrl = GetEnv("WST_SERVER", DefaultServerUrl),
-            PathPrefix = GetEnv("WST_PATH_PREFIX", DefaultPathPrefix),
-            ListenIp = GetEnv("WST_LISTEN_IP", DefaultListenIp),
-            ListenPort = GetEnvInt("WST_LISTEN_PORT", DefaultListenPort),
-            VerifyTls = GetEnvBool("WST_VERIFY_TLS", false)
+            ServerUrl = EnvironmentUtil.GetEnv("WST_SERVER", DefaultServerUrl),
+            PathPrefix = EnvironmentUtil.GetEnv("WST_PATH_PREFIX", DefaultPathPrefix),
+            ListenIp = EnvironmentUtil.GetEnv("WST_LISTEN_IP", DefaultListenIp),
+            ListenPort = EnvironmentUtil.GetEnvInt("WST_LISTEN_PORT", DefaultListenPort),
+            VerifyTls = EnvironmentUtil.GetEnvBool("WST_VERIFY_TLS", false)
         };
 
         for (var i = 0; i < args.Length; i++)
@@ -159,19 +160,19 @@ internal static partial class Program
             {
                 case "--server":
                 case "-s":
-                    cfg.ServerUrl = NextValue(args, ref i, "--server");
+                    cfg.ServerUrl = CommandLineUtil.NextValue(args, ref i, "--server");
                     break;
                 case "--path-prefix":
                 case "-P":
-                    cfg.PathPrefix = NextValue(args, ref i, "--path-prefix");
+                    cfg.PathPrefix = CommandLineUtil.NextValue(args, ref i, "--path-prefix");
                     break;
                 case "--listen-ip":
                 case "-l":
-                    cfg.ListenIp = NextValue(args, ref i, "--listen-ip");
+                    cfg.ListenIp = CommandLineUtil.NextValue(args, ref i, "--listen-ip");
                     break;
                 case "--listen-port":
                 case "-p":
-                    cfg.ListenPort = int.Parse(NextValue(args, ref i, "--listen-port"));
+                    cfg.ListenPort = int.Parse(CommandLineUtil.NextValue(args, ref i, "--listen-port"));
                     break;
                 case "--verify-tls":
                 case "-k":
@@ -196,17 +197,6 @@ internal static partial class Program
         return cfg;
     }
 
-    private static string NextValue(string[] args, ref int i, string flag)
-    {
-        if (i + 1 >= args.Length)
-        {
-            throw new ArgumentException($"Missing value for {flag}");
-        }
-
-        i++;
-        return args[i];
-    }
-
     private static void PrintHelpAndExit()
     {
         Console.WriteLine("Usage:");
@@ -214,34 +204,6 @@ internal static partial class Program
         Console.WriteLine("Environment variables:");
         Console.WriteLine("  WST_SERVER, WST_PATH_PREFIX, WST_LISTEN_IP, WST_LISTEN_PORT, WST_VERIFY_TLS");
         Environment.Exit(0);
-    }
-
-    private static string GetEnv(string name, string fallback)
-    {
-        var value = Environment.GetEnvironmentVariable(name);
-        return string.IsNullOrWhiteSpace(value) ? fallback : value;
-    }
-
-    private static int GetEnvInt(string name, int fallback)
-    {
-        var value = Environment.GetEnvironmentVariable(name);
-        return int.TryParse(value, out var parsed) ? parsed : fallback;
-    }
-
-    private static bool GetEnvBool(string name, bool fallback)
-    {
-        var value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return fallback;
-        }
-
-        return value.Trim().ToLowerInvariant() switch
-        {
-            "1" or "true" or "yes" or "on" => true,
-            "0" or "false" or "no" or "off" => false,
-            _ => fallback
-        };
     }
 
     private static void PrintEffectiveConfig(AppConfig cfg)
@@ -254,29 +216,4 @@ internal static partial class Program
         Console.WriteLine($"  verify_tls: {cfg.VerifyTls}");
     }
 
-    private static (string Host, int Port) ParseConnectAuthority(string authority)
-    {
-        if (authority.StartsWith("[", StringComparison.Ordinal))
-        {
-            var end = authority.LastIndexOf("]:", StringComparison.Ordinal);
-            if (end <= 0)
-            {
-                throw new FormatException("invalid IPv6 authority");
-            }
-
-            var host = authority.Substring(1, end - 1);
-            var port = int.Parse(authority[(end + 2)..]);
-            return (host, port);
-        }
-
-        var idx = authority.LastIndexOf(':');
-        if (idx <= 0)
-        {
-            throw new FormatException("missing port in CONNECT authority");
-        }
-
-        var h = authority[..idx];
-        var p = int.Parse(authority[(idx + 1)..]);
-        return (h, p);
-    }
 }
