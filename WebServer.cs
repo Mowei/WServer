@@ -1,13 +1,12 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Net;
-using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-internal static class Program
+internal static partial class Program
 {
     private const string DefaultServerUrl = "";
     private const string DefaultPathPrefix = "v1";
@@ -33,6 +32,7 @@ internal static class Program
     private static async Task HandleClientAsync(TcpClient client, AppConfig cfg)
     {
         WebSocketTunnel? ws = null;
+        await using var wsClient = new WebSocketTunnelClient(cfg);
         try
         {
             var clientStream = client.GetStream();
@@ -53,7 +53,7 @@ internal static class Program
             var (host, port) = ParseConnectAuthority(parts[1]);
 
             Console.WriteLine($"[connect] {host}:{port}");
-            ws = await OpenWsTunnelAsync(host, port, cfg);
+            ws = await wsClient.SendAsync(new WebSocketTunnelRequest(host, port));
 
             await WriteAsciiAsync(clientStream, "HTTP/1.1 200 OK\r\n\r\n");
             await RelayAsync(clientStream, ws);
@@ -135,49 +135,6 @@ internal static class Program
         {
             // Ignore close errors.
         }
-    }
-
-    private static async Task<WebSocketTunnel> OpenWsTunnelAsync(string targetHost, int targetPort, AppConfig cfg)
-    {
-        var serverUri = new Uri(cfg.ServerUrl);
-        var tcp = new TcpClient();
-        await tcp.ConnectAsync(serverUri.Host, serverUri.Port > 0 ? serverUri.Port : 443);
-
-        Stream stream = tcp.GetStream();
-        if (serverUri.Scheme.Equals("wss", StringComparison.OrdinalIgnoreCase))
-        {
-            var ssl = new SslStream(
-                stream,
-                false,
-                (_, _, _, sslErrors) => !cfg.VerifyTls || sslErrors == SslPolicyErrors.None
-            );
-            await ssl.AuthenticateAsClientAsync(serverUri.Host);
-            stream = ssl;
-        }
-
-        var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
-        var jwt = MakeJwt(targetHost, targetPort);
-        var request =
-            $"GET /{cfg.PathPrefix}/events HTTP/1.1\r\n" +
-            $"Host: {serverUri.Host}\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: upgrade\r\n" +
-            $"Sec-WebSocket-Key: {key}\r\n" +
-            "Sec-WebSocket-Version: 13\r\n" +
-            $"Sec-WebSocket-Protocol: v1, authorization.bearer.{jwt}\r\n" +
-            "\r\n";
-
-        await WriteAsciiAsync(stream, request);
-
-        var responseHead = await ReadHttpHeadAsync(stream);
-        var statusLine = GetFirstLine(responseHead);
-        if (!statusLine.Contains(" 101 ", StringComparison.Ordinal))
-        {
-            var preview = Encoding.ASCII.GetString(responseHead);
-            throw new IOException($"websocket handshake failed: {statusLine}; response={preview}");
-        }
-
-        return new WebSocketTunnel(tcp, stream);
     }
 
     private static AppConfig ParseArgs(string[] args)
@@ -411,6 +368,18 @@ internal static class Program
     {
         var bytes = Encoding.ASCII.GetBytes(text);
         return stream.WriteAsync(bytes, 0, bytes.Length);
+    }
+
+    private sealed class WebSocketTunnelRequest
+    {
+        public WebSocketTunnelRequest(string targetHost, int targetPort)
+        {
+            TargetHost = targetHost;
+            TargetPort = targetPort;
+        }
+
+        public string TargetHost { get; }
+        public int TargetPort { get; }
     }
 
     private readonly struct WsFrame
