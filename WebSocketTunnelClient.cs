@@ -1,11 +1,14 @@
+using System.Buffers;
+using System.Buffers;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
-internal static partial class Program
+namespace WebServer
 {
-    private sealed class WebSocketTunnelClient : IAsyncDisposable
+    public class WebSocketTunnelClient : IAsyncDisposable
     {
         private readonly AppConfig _cfg;
 
@@ -59,10 +62,103 @@ internal static partial class Program
 
             return new WebSocketTunnel(tcp, stream);
         }
+        private static string Base64UrlEncode(byte[] data)
+        {
+            return Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+        private static string MakeJwt(string host, int port)
+        {
+            var headerBuffer = new ArrayBufferWriter<byte>();
+            using (var writer = new Utf8JsonWriter(headerBuffer))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("typ", "JWT");
+                writer.WriteString("alg", "HS256");
+                writer.WriteEndObject();
+            }
+
+            var payloadBuffer = new ArrayBufferWriter<byte>();
+            using (var writer = new Utf8JsonWriter(payloadBuffer))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("id", Guid.NewGuid().ToString());
+                writer.WritePropertyName("p");
+                writer.WriteStartObject();
+                writer.WritePropertyName("Tcp");
+                writer.WriteStartObject();
+                writer.WriteBoolean("proxy_protocol", false);
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+                writer.WriteString("r", host);
+                writer.WriteNumber("rp", port);
+                writer.WriteEndObject();
+            }
+
+            var header = Base64UrlEncode(headerBuffer.WrittenSpan.ToArray());
+            var payload = Base64UrlEncode(payloadBuffer.WrittenSpan.ToArray());
+
+            var signingInput = Encoding.ASCII.GetBytes($"{header}.{payload}");
+            using var hmac = new HMACSHA256(Encoding.ASCII.GetBytes("any-secret"));
+            var sig = Base64UrlEncode(hmac.ComputeHash(signingInput));
+            return $"{header}.{payload}.{sig}";
+        }
 
         public ValueTask DisposeAsync()
         {
             return ValueTask.CompletedTask;
+        }
+
+        private static string GetFirstLine(byte[] data)
+        {
+            var s = Encoding.ASCII.GetString(data);
+            var i = s.IndexOf("\r\n", StringComparison.Ordinal);
+            return i >= 0 ? s[..i] : s;
+        }
+
+        private static async Task<byte[]> ReadHttpHeadAsync(Stream stream)
+        {
+            var buffer = new byte[4096];
+            using var ms = new MemoryStream();
+            while (ms.Length < 65536)
+            {
+                var read = await stream.ReadAsync(buffer, 0, buffer.Length);
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                ms.Write(buffer, 0, read);
+                if (EndsWithHttpHead(ms.GetBuffer(), (int)ms.Length))
+                {
+                    break;
+                }
+            }
+
+            return ms.ToArray();
+        }
+
+        private static bool EndsWithHttpHead(byte[] data, int len)
+        {
+            if (len < 4)
+            {
+                return false;
+            }
+
+            for (var i = 3; i < len; i++)
+            {
+                if (data[i - 3] == '\r' && data[i - 2] == '\n' && data[i - 1] == '\r' && data[i] == '\n')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Task WriteAsciiAsync(Stream stream, string text)
+        {
+            var bytes = Encoding.ASCII.GetBytes(text);
+            return stream.WriteAsync(bytes, 0, bytes.Length);
         }
     }
 }
