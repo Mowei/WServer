@@ -51,6 +51,8 @@ internal static class Program
             }
 
             var (host, port) = ParseConnectAuthority(parts[1]);
+
+            Console.WriteLine($"[connect] {host}:{port}");
             ws = await OpenWsTunnelAsync(host, port, cfg);
 
             await WriteAsciiAsync(clientStream, "HTTP/1.1 200 OK\r\n\r\n");
