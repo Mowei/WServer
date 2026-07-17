@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using WebServer;
+using WSTool.Configuration;
+using WSTool.Contracts;
+using WSTool.Transport;
 
 internal static partial class Program
 {
@@ -28,8 +30,8 @@ internal static partial class Program
 
     private static async Task HandleClientAsync(TcpClient client, AppConfig cfg)
     {
-        WebSocketTunnel? ws = null;
-        await using var wsClient = new WebSocketTunnelClient(cfg);
+        WebSocketTool? ws = null;
+        await using var wsClient = new WebSocketToolClient(cfg);
         try
         {
             var clientStream = client.GetStream();
@@ -50,7 +52,7 @@ internal static partial class Program
             var (host, port) = ParseConnectAuthority(parts[1]);
 
             Console.WriteLine($"[connect] {host}:{port}");
-            ws = await wsClient.SendAsync(new WebSocketTunnelRequest(host, port));
+            ws = await wsClient.SendAsync(new WebSocketToolRequest(host, port));
 
             await WriteAsciiAsync(clientStream, "HTTP/1.1 200 OK\r\n\r\n");
             await RelayAsync(clientStream, ws);
@@ -70,7 +72,7 @@ internal static partial class Program
         }
     }
 
-    private static async Task RelayAsync(NetworkStream local, WebSocketTunnel ws)
+    private static async Task RelayAsync(NetworkStream local, WebSocketTool ws)
     {
         using var cts = new CancellationTokenSource();
 
