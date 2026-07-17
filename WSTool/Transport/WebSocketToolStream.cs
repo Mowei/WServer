@@ -37,35 +37,34 @@ public sealed class WebSocketToolStream : Stream
         try
         {
             var len = payload.Length;
-            var header = new List<byte>(14)
-            {
-                (byte)(0x80 | (opcode & 0x0F))
-            };
+            var header = new byte[14];
+            var headerLen = 0;
+
+            header[headerLen++] = (byte)(0x80 | (opcode & 0x0F));
 
             if (len <= 125)
             {
-                header.Add((byte)(0x80 | len));
+                header[headerLen++] = (byte)(0x80 | len);
             }
             else if (len <= ushort.MaxValue)
             {
-                header.Add(0x80 | 126);
-                header.Add((byte)((len >> 8) & 0xFF));
-                header.Add((byte)(len & 0xFF));
+                header[headerLen++] = 0x80 | 126;
+                header[headerLen++] = (byte)((len >> 8) & 0xFF);
+                header[headerLen++] = (byte)(len & 0xFF);
             }
             else
             {
-                header.Add(0x80 | 127);
-                Span<byte> tmp = stackalloc byte[8];
-                BinaryPrimitives.WriteUInt64BigEndian(tmp, (ulong)len);
-                header.AddRange(tmp.ToArray());
+                header[headerLen++] = 0x80 | 127;
+                BinaryPrimitives.WriteUInt64BigEndian(header.AsSpan(headerLen, 8), (ulong)len);
+                headerLen += 8;
             }
 
-            header.Add(0x00);
-            header.Add(0x00);
-            header.Add(0x00);
-            header.Add(0x00);
+            header[headerLen++] = 0x00;
+            header[headerLen++] = 0x00;
+            header[headerLen++] = 0x00;
+            header[headerLen++] = 0x00;
 
-            await _stream.WriteAsync(header.ToArray(), 0, header.Count, ct);
+            await _stream.WriteAsync(header, 0, headerLen, ct);
             if (len > 0)
             {
                 await _stream.WriteAsync(payload, ct);
@@ -136,7 +135,7 @@ public sealed class WebSocketToolStream : Stream
         {
             for (var i = 0; i < payload.Length; i++)
             {
-                payload[i] ^= mask[i % 4];
+                payload[i] ^= mask[i & 3];
             }
         }
 
@@ -250,12 +249,13 @@ public sealed class WebSocketToolStream : Stream
         {
             return;
         }
+        _disposed = true;
+
         try { _stream.Close(); } catch { }
         try { _tcp.Close(); } catch { }
         _sendLock.Dispose();
-        await Task.CompletedTask;
 
-        _disposed = true;
+        await Task.CompletedTask;
 
         GC.SuppressFinalize(this);
     }
@@ -268,6 +268,13 @@ public sealed class WebSocketToolStream : Stream
         }
 
         _disposed = true;
+
+        if (disposing)
+        {
+            try { _stream.Close(); } catch { }
+            try { _tcp.Close(); } catch { }
+            _sendLock.Dispose();
+        }
 
         base.Dispose(disposing);
     }

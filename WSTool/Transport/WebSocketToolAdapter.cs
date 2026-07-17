@@ -11,9 +11,9 @@ namespace WSTool.Transport;
 
 public sealed class WebSocketToolAdapter : IAsyncDisposable
 {
-    private readonly AppConfig _cfg;
+    private readonly AdapterConfig _cfg;
 
-    public WebSocketToolAdapter(AppConfig cfg)
+    public WebSocketToolAdapter(AdapterConfig cfg)
     {
         _cfg = cfg;
     }
@@ -185,20 +185,18 @@ public sealed class WebSocketToolAdapter : IAsyncDisposable
     }
 
 
-    private static AppConfig CreateConfig(string serverUrl, string pathPrefix, bool verifyTls)
+    private static AdapterConfig CreateConfig(string serverUrl, string pathPrefix, bool verifyTls)
     {
         if (string.IsNullOrWhiteSpace(serverUrl))
         {
             throw new ArgumentException("serverUrl is required", nameof(serverUrl));
         }
 
-        return new AppConfig
+        return new AdapterConfig
         {
             ServerUrl = serverUrl,
             PathPrefix = pathPrefix,
             VerifyTls = verifyTls,
-            ListenIp = "127.0.0.1",
-            ListenPort = 0
         };
     }
 

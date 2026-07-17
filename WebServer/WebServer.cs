@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using WSTool.Configuration;
+using WebServer.Configuration;
 using WSTool.Contracts;
 using WSTool.Transport;
 
@@ -16,7 +16,13 @@ internal static partial class Program
     {
         var cfg = ParseArgs(args);
         PrintEffectiveConfig(cfg);
-
+        /*
+        var wsClient = new WebSocketToolAdapter(cfg);
+        
+        var wsHttpClient = wsClient.CreateHttpClient();
+        var wsResponse = await wsHttpClient.GetAsync("https://www.google.com");
+        Console.WriteLine($"[test] status: {wsResponse.StatusCode} Body {await wsResponse.Content.ReadAsStringAsync()}");
+        */
         var listener = new TcpListener(IPAddress.Parse(cfg.ListenIp), cfg.ListenPort);
         listener.Start(128);
         Console.WriteLine($"HTTP proxy listening on {cfg.ListenIp}:{cfg.ListenPort} -> {cfg.ServerUrl}");
@@ -31,7 +37,7 @@ internal static partial class Program
     private static async Task HandleClientAsync(TcpClient client, AppConfig cfg)
     {
         WebSocketToolStream? ws = null;
-        await using var wsClient = new WebSocketToolAdapter(cfg);
+        await using var wsClient = new WebSocketToolAdapter(cfg.ServerUrl, cfg.PathPrefix, cfg.VerifyTls);
         try
         {
             var clientStream = client.GetStream();
